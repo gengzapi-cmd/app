@@ -29,6 +29,11 @@ jobs:
           channel: 'stable'
           cache: true
 
+      - name: Generate Android & Platform Scaffolding
+        run: |
+          cd aplikasi
+          flutter create . --org com.snipster --project-name snipster
+
       - name: Install Dependencies
         run: |
           cd aplikasi
