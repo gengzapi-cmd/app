@@ -287,7 +287,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 top: _isLoadingStarted ? -34.0 : (screenHeight - 395.0),
                 left: 0,
                 right: 0,
-                height: screenHeight + 34.0,
+                height: _isLoadingStarted ? (screenHeight + 34.0) : 395.0,
                 child: Container(
                   decoration: BoxDecoration(
                     color: Colors.white,
