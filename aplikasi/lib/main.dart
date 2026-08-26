@@ -255,7 +255,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                   opacity: 0.15,
                   child: Container(
                     decoration: BoxDecoration(
-                      radialGradient: RadialGradient(
+                      gradient: RadialGradient(
                         colors: [
                           Colors.white.withOpacity(0.4),
                           Colors.transparent,
