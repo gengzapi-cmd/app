@@ -502,6 +502,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                             ],
                           ),
                         ),
+                      ),
 
                     // Fullscreen Video Loading Interface
                     if (_isFullscreenLoading)
