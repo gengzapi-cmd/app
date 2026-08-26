@@ -345,12 +345,11 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
                       // Onboarding Slides View (Hidden immediately when loading starts)
                       if (!_isLoadingStarted)
-                        SafeArea(
-                          child: Padding(
-                            padding: const EdgeInsets.fromLTRB(24, 48, 24, 20),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 48, 24, 28),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
                                 FadeTransition(
                                   opacity: _slideFadeController,
                                   child: Column(
@@ -490,7 +489,6 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                               ],
                             ),
                           ),
-                        ),
 
                       // Fullscreen Video Loading Interface (Fades in AFTER white sheet reaches top)
                       if (_showLoadingContent)
