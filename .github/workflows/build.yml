@@ -34,6 +34,13 @@ jobs:
           cd aplikasi
           flutter create . --org com.snipster --project-name snipster
 
+      - name: Configure Android minSdkVersion for video_player
+        run: |
+          cd aplikasi
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle || true
+          sed -i 's/minSdkVersion 16/minSdkVersion 21/g' android/app/build.gradle || true
+          sed -i 's/minSdkVersion 19/minSdkVersion 21/g' android/app/build.gradle || true
+
       - name: Install Dependencies
         run: |
           cd aplikasi
@@ -42,7 +49,7 @@ jobs:
       - name: Build Android APK
         run: |
           cd aplikasi
-          flutter build apk --release
+          flutter build apk --release --no-tree-shake-icons
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
