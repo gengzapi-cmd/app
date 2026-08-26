@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:video_player/video_player.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   runApp(const SnipsterApp());
 }
 
@@ -57,6 +59,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   late VideoPlayerController _videoController;
   late AnimationController _spinController;
   late AnimationController _slideFadeController;
+  late AnimationController _expandController;
   Timer? _progressTimer;
 
   final List<OnboardingSlide> _slides = const [
@@ -103,11 +106,16 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       value: 1.0,
     );
 
+    _expandController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 750),
+    );
+
     _videoController = VideoPlayerController.asset(
       'assets/videos/kucingnew.mp4',
     )..initialize().then((_) {
         _videoController.setLooping(true);
-        setState(() {});
+        if (mounted) setState(() {});
       });
   }
 
@@ -115,6 +123,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   void dispose() {
     _spinController.dispose();
     _slideFadeController.dispose();
+    _expandController.dispose();
     _videoController.dispose();
     _progressTimer?.cancel();
     super.dispose();
@@ -125,10 +134,12 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
     _spinController.forward(from: 0.0);
     _slideFadeController.reverse().then((_) {
-      setState(() {
-        _currentSlide = index;
-      });
-      _slideFadeController.forward();
+      if (mounted) {
+        setState(() {
+          _currentSlide = index;
+        });
+        _slideFadeController.forward();
+      }
     });
   }
 
@@ -141,94 +152,91 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   }
 
   void _startAppLoading() {
-    setState(() {
-      _isFullscreenLoading = true;
+    // Smoothly expand bottom sheet upwards while KEEPING top curved arch intact!
+    _expandController.forward();
+
+    // Once sheet reaches the top, activate video loading content
+    Future.delayed(const Duration(milliseconds: 650), () {
+      if (!mounted) return;
+
+      setState(() {
+        _isFullscreenLoading = true;
+      });
+
+      _videoController.seekTo(Duration.zero);
+      _videoController.setPlaybackSpeed(0.7); // 0.7x slow-motion
+      _videoController.play();
+
+      const totalDurationMs = 5000;
+      const updateIntervalMs = 50;
+      final stepIncrement = 100.0 / (totalDurationMs / updateIntervalMs);
+
+      _progressTimer = Timer.periodic(
+        const Duration(milliseconds: updateIntervalMs),
+        (timer) {
+          if (!mounted) return;
+
+          setState(() {
+            _progress += stepIncrement;
+            if (_progress > 100) _progress = 100;
+
+            final pct = _progress.round();
+            if (pct <= 20) {
+              _currentLog = "MENYIAPKAN CORE ENGINE...";
+            } else if (pct <= 40) {
+              _currentLog = "MENGINSTALL LIBRARY MEDIA...";
+            } else if (pct <= 65) {
+              _currentLog = "MENGINSTALL FFMPEG DECODER...";
+            } else if (pct <= 85) {
+              _currentLog = "MENGHUBUNGKAN AKSELERASI...";
+            } else if (pct < 100) {
+              _currentLog = "MEMVERIFIKASI SISTEM...";
+            } else {
+              _currentLog = "SELESAI";
+            }
+
+            // AT 90% LOADING, CAT WAKES UP
+            if (_progress >= 90) {
+              _videoController.setPlaybackSpeed(1.0);
+            }
+
+            if (_progress >= 100) {
+              timer.cancel();
+              _currentLog = "SELESAI 100%";
+
+              // FADE OUT LOADING SCREEN SMOOTHLY
+              Future.delayed(const Duration(milliseconds: 600), () {
+                if (mounted) {
+                  setState(() {
+                    _loadingOpacity = 0.0;
+                  });
+                }
+              });
+            }
+          });
+        },
+      );
     });
-
-    _videoController.seekTo(Duration.zero);
-    _videoController.setPlaybackSpeed(0.7); // SLOW-MOTION AT 0.7X
-    _videoController.play();
-
-    const totalDurationMs = 5000;
-    const updateIntervalMs = 50;
-    final stepIncrement = 100.0 / (totalDurationMs / updateIntervalMs);
-
-    _progressTimer = Timer.periodic(
-      const Duration(milliseconds: updateIntervalMs),
-      (timer) {
-        setState(() {
-          _progress += stepIncrement;
-          if (_progress > 100) _progress = 100;
-
-          final pct = _progress.round();
-          if (pct <= 20) {
-            _currentLog = "MENYIAPKAN CORE ENGINE...";
-          } else if (pct <= 40) {
-            _currentLog = "MENGINSTALL LIBRARY MEDIA...";
-          } else if (pct <= 65) {
-            _currentLog = "MENGINSTALL FFMPEG DECODER...";
-          } else if (pct <= 85) {
-            _currentLog = "MENGHUBUNGKAN AKSELERASI...";
-          } else if (pct < 100) {
-            _currentLog = "MEMVERIFIKASI SISTEM...";
-          } else {
-            _currentLog = "SELESAI";
-          }
-
-          // AT 90% LOADING, CAT WAKES UP IN SMOOTH SPEED
-          if (_progress >= 90) {
-            _videoController.setPlaybackSpeed(1.0);
-          }
-
-          if (_progress >= 100) {
-            timer.cancel();
-            _currentLog = "SELESAI 100%";
-
-            // FADE OUT LOADING SCREEN SMOOTHLY
-            Future.delayed(const Duration(milliseconds: 600), () {
-              if (mounted) {
-                setState(() {
-                  _loadingOpacity = 0.0;
-                });
-              }
-            });
-          }
-        });
-      },
-    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
+    final mediaQuery = MediaQuery.of(context);
+    final screenHeight = mediaQuery.size.height;
+    final screenWidth = mediaQuery.size.width;
     final currentSlideData = _slides[_currentSlide];
 
     return Scaffold(
-      backgroundColor: const Color(0xFF111827),
-      body: Center(
-        child: Container(
-          width: size.width > 420 ? 360 : size.width,
-          height: size.height > 800 ? 740 : size.height,
-          decoration: BoxDecoration(
-            color: Colors.black,
-            borderRadius: BorderRadius.circular(size.width > 420 ? 46 : 0),
-            border: size.width > 420
-                ? Border.all(color: const Color(0xFF1C1B22), width: 8)
-                : null,
-            boxShadow: size.width > 420
-                ? [
-                    BoxShadow(
-                      color: const Color(0xFFDC2626).withOpacity(0.35),
-                      blurRadius: 60,
-                      offset: const Offset(0, 25),
-                    ),
-                  ]
-                : null,
-          ),
-          clipBehavior: Clip.antiAlias,
+      backgroundColor: const Color(0xFF991B1B),
+      body: AnimatedOpacity(
+        duration: const Duration(milliseconds: 600),
+        opacity: _loadingOpacity,
+        child: SizedBox(
+          width: screenWidth,
+          height: screenHeight,
           child: Stack(
             children: [
-              // Vibrant Crimson Background Gradient
+              // Full Crimson Red Background Gradient
               Container(
                 width: double.infinity,
                 height: double.infinity,
@@ -245,12 +253,12 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 ),
               ),
 
-              // Soft Mesh Backdrop
+              // Soft Mesh Backdrop Overlay
               Positioned(
                 top: 0,
                 left: 0,
                 right: 0,
-                height: size.height * 0.6,
+                height: screenHeight * 0.6,
                 child: Opacity(
                   opacity: 0.15,
                   child: Container(
@@ -267,321 +275,341 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 ),
               ),
 
-              // Bottom Sheet Container
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 650),
-                curve: const Cubic(0.16, 1.0, 0.3, 1.0),
-                bottom: 0,
-                left: 0,
-                right: 0,
-                height: _isFullscreenLoading ? (size.height > 800 ? 740 : size.height) : 395,
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 600),
-                  opacity: _loadingOpacity,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: _isFullscreenLoading
-                          ? BorderRadius.zero
-                          : const BorderRadius.only(
-                              topLeft: Radius.elliptical(180, 34),
-                              topRight: Radius.elliptical(180, 34),
-                            ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.12),
-                          blurRadius: 40,
-                          offset: const Offset(0, -12),
+              // Smoothly Expanding Pure White Bottom Sheet (LENGKUNGAN TETAP DIPERTAHANKAN SAMPAI KE ATAS!)
+              AnimatedBuilder(
+                animation: _expandController,
+                builder: (context, child) {
+                  final curvedValue = CurvedAnimation(
+                    parent: _expandController,
+                    curve: const Cubic(0.16, 1.0, 0.3, 1.0),
+                  ).value;
+
+                  final sheetHeight =
+                      395.0 + (screenHeight - 395.0) * curvedValue;
+                  
+                  // Maintain top curved arch ALL THE WAY to the top!
+                  final isFullyAtTop = curvedValue >= 0.99 && _isFullscreenLoading;
+                  final cornerRadius = isFullyAtTop ? 0.0 : 34.0;
+
+                  return Positioned(
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    height: sheetHeight,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.only(
+                          topLeft: Radius.elliptical(180, cornerRadius),
+                          topRight: Radius.elliptical(180, cornerRadius),
                         ),
-                      ],
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.12),
+                            blurRadius: 40,
+                            offset: const Offset(0, -12),
+                          ),
+                        ],
+                      ),
+                      child: child,
                     ),
-                    child: Stack(
-                      clipBehavior: Clip.none,
-                      alignment: Alignment.topCenter,
-                      children: [
-                        // Floating Black Logo Box
-                        if (!_isFullscreenLoading)
-                          Positioned(
-                            top: -43,
-                            child: RotationTransition(
-                              turns: Tween(begin: 0.0, end: 1.0).animate(
-                                CurvedAnimation(
-                                  parent: _spinController,
-                                  curve: Curves.easeInOutBack,
+                  );
+                },
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  alignment: Alignment.topCenter,
+                  children: [
+                    // Floating Black Logo Box
+                    if (!_isFullscreenLoading)
+                      Positioned(
+                        top: -43,
+                        child: RotationTransition(
+                          turns: Tween(begin: 0.0, end: 1.0).animate(
+                            CurvedAnimation(
+                              parent: _spinController,
+                              curve: Curves.easeInOutBack,
+                            ),
+                          ),
+                          child: Container(
+                            width: 86,
+                            height: 86,
+                            decoration: BoxDecoration(
+                              color: Colors.black,
+                              borderRadius: BorderRadius.circular(24),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.4),
+                                  blurRadius: 32,
+                                  offset: const Offset(0, 14),
                                 ),
-                              ),
-                              child: Container(
-                                width: 86,
-                                height: 86,
-                                decoration: BoxDecoration(
-                                  color: Colors.black,
-                                  borderRadius: BorderRadius.circular(24),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.4),
-                                      blurRadius: 32,
-                                      offset: const Offset(0, 14),
-                                    ),
-                                  ],
-                                ),
-                                child: Center(
-                                  child: Icon(
-                                    currentSlideData.icon,
-                                    color: Colors.white,
-                                    size: 42,
-                                  ),
-                                ),
+                              ],
+                            ),
+                            child: Center(
+                              child: Icon(
+                                currentSlideData.icon,
+                                color: Colors.white,
+                                size: 42,
                               ),
                             ),
                           ),
+                        ),
+                      ),
 
-                        // Onboarding Content
-                        if (!_isFullscreenLoading)
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(24, 64, 24, 20),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                FadeTransition(
-                                  opacity: _slideFadeController,
-                                  child: Column(
+                    // Onboarding Content View
+                    if (!_isFullscreenLoading)
+                      SafeArea(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 48, 24, 20),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              FadeTransition(
+                                opacity: _slideFadeController,
+                                child: Column(
+                                  children: [
+                                    // Red Pill Tag
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 20,
+                                        vertical: 6,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFFEE2E2),
+                                        borderRadius:
+                                            BorderRadius.circular(14),
+                                      ),
+                                      child: Text(
+                                        currentSlideData.tag,
+                                        style: GoogleFonts.outfit(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.bold,
+                                          color: const Color(0xFFDC2626),
+                                          letterSpacing: 0.3,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 12),
+
+                                    // Title
+                                    Text(
+                                      currentSlideData.title,
+                                      style: GoogleFonts.outfit(
+                                        fontSize: 28,
+                                        fontWeight: FontWeight.w800,
+                                        color: const Color(0xFF111827),
+                                        letterSpacing: -0.5,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+
+                                    // Subtitle
+                                    Text(
+                                      currentSlideData.subtitle,
+                                      textAlign: TextAlign.center,
+                                      style: GoogleFonts.inter(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w500,
+                                        color: const Color(0xFF6B7280),
+                                        height: 1.4,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+
+                              // Action Button
+                              GestureDetector(
+                                onTap: _handleNextAction,
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 350),
+                                  curve: Curves.easeOutBack,
+                                  height: 56,
+                                  width: _currentSlide == 3 ? 220 : 56,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFEF4444),
+                                    gradient: _currentSlide == 3
+                                        ? const LinearGradient(
+                                            colors: [
+                                              Color(0xFFEF4444),
+                                              Color(0xFFDC2626),
+                                            ],
+                                          )
+                                        : null,
+                                    borderRadius: BorderRadius.circular(
+                                      _currentSlide == 3 ? 18 : 16,
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: const Color(0xFFEF4444)
+                                            .withOpacity(0.4),
+                                        blurRadius: 24,
+                                        offset: const Offset(0, 10),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.center,
                                     children: [
-                                      // Red Pill Tag
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 20,
-                                          vertical: 6,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFFFEE2E2),
-                                          borderRadius:
-                                              BorderRadius.circular(14),
-                                        ),
-                                        child: Text(
-                                          currentSlideData.tag,
+                                      if (_currentSlide == 3) ...[
+                                        Text(
+                                          'Mulai Sekarang',
                                           style: GoogleFonts.outfit(
-                                            fontSize: 14,
+                                            fontSize: 16,
                                             fontWeight: FontWeight.bold,
-                                            color: const Color(0xFFDC2626),
-                                            letterSpacing: 0.3,
+                                            color: Colors.white,
                                           ),
                                         ),
-                                      ),
-                                      const SizedBox(height: 10),
-
-                                      // Title
-                                      Text(
-                                        currentSlideData.title,
-                                        style: GoogleFonts.outfit(
-                                          fontSize: 28,
-                                          fontWeight: FontWeight.w800,
-                                          color: const Color(0xFF111827),
-                                          letterSpacing: -0.5,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 4),
-
-                                      // Subtitle
-                                      Text(
-                                        currentSlideData.subtitle,
-                                        textAlign: TextAlign.center,
-                                        style: GoogleFonts.inter(
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.w500,
-                                          color: const Color(0xFF6B7280),
-                                          height: 1.4,
-                                        ),
+                                        const SizedBox(width: 8),
+                                      ],
+                                      const Icon(
+                                        Icons.arrow_forward_rounded,
+                                        color: Colors.white,
+                                        size: 24,
                                       ),
                                     ],
                                   ),
                                 ),
+                              ),
 
-                                // Action Button
-                                GestureDetector(
-                                  onTap: _handleNextAction,
-                                  child: AnimatedContainer(
-                                    duration: const Duration(milliseconds: 350),
-                                    curve: Curves.easeOutBack,
-                                    height: 56,
-                                    width: _currentSlide == 3 ? 220 : 56,
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFFEF4444),
-                                      gradient: _currentSlide == 3
-                                          ? const LinearGradient(
+                              // Carousel Dots
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: List.generate(4, (index) {
+                                  final isActive = index == _currentSlide;
+                                  return GestureDetector(
+                                    onTap: () => _goToSlide(index),
+                                    child: AnimatedContainer(
+                                      duration: const Duration(
+                                        milliseconds: 350,
+                                      ),
+                                      margin: const EdgeInsets.symmetric(
+                                        horizontal: 3,
+                                      ),
+                                      width: isActive ? 22 : 6,
+                                      height: 6,
+                                      decoration: BoxDecoration(
+                                        color: isActive
+                                            ? const Color(0xFFEF4444)
+                                            : const Color(0xFFE5E7EB),
+                                        borderRadius:
+                                            BorderRadius.circular(3),
+                                      ),
+                                    ),
+                                  );
+                                }),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                    // Fullscreen Video Loading Interface
+                    if (_isFullscreenLoading)
+                      Center(
+                        child: SizedBox(
+                          width: screenWidth > 340 ? 320 : screenWidth * 0.9,
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              // MP4 Video Player Stack
+                              Stack(
+                                alignment: Alignment.bottomCenter,
+                                children: [
+                                  if (_videoController.value.isInitialized)
+                                    AspectRatio(
+                                      aspectRatio:
+                                          _videoController.value.aspectRatio,
+                                      child: VideoPlayer(_videoController),
+                                    )
+                                  else
+                                    const SizedBox(
+                                      height: 180,
+                                      child: Center(
+                                        child: CircularProgressIndicator(
+                                          color: Color(0xFFEF4444),
+                                        ),
+                                      ),
+                                    ),
+
+                                  // White Bottom Mask Overlay (7px height)
+                                  Container(
+                                    height: 7,
+                                    color: Colors.white,
+                                  ),
+                                ],
+                              ),
+
+                              // Progress Bar Positioned Exactly at 61% Gap Between Cat Body and Tail
+                              Positioned(
+                                top: 108, // Fits perfectly inside the 61% gap of the video
+                                child: Container(
+                                  width: 260,
+                                  height: 22,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFE5E7EB),
+                                    borderRadius: BorderRadius.circular(11),
+                                    boxShadow: const [
+                                      BoxShadow(
+                                        color: Colors.black12,
+                                        blurRadius: 3,
+                                        offset: Offset(0, 1),
+                                      ),
+                                    ],
+                                  ),
+                                  clipBehavior: Clip.antiAlias,
+                                  child: Stack(
+                                    alignment: Alignment.center,
+                                    children: [
+                                      // Progress Fill
+                                      Positioned(
+                                        left: 0,
+                                        top: 0,
+                                        bottom: 0,
+                                        width: 260 * (_progress / 100.0),
+                                        child: Container(
+                                          decoration: BoxDecoration(
+                                            gradient: const LinearGradient(
                                               colors: [
                                                 Color(0xFFEF4444),
                                                 Color(0xFFDC2626),
                                               ],
-                                            )
-                                          : null,
-                                      borderRadius: BorderRadius.circular(
-                                        _currentSlide == 3 ? 18 : 16,
-                                      ),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: const Color(0xFFEF4444)
-                                              .withOpacity(0.4),
-                                          blurRadius: 24,
-                                          offset: const Offset(0, 10),
-                                        ),
-                                      ],
-                                    ),
-                                    child: Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        if (_currentSlide == 3) ...[
-                                          Text(
-                                            'Mulai Sekarang',
-                                            style: GoogleFonts.outfit(
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.bold,
-                                              color: Colors.white,
                                             ),
+                                            borderRadius:
+                                                BorderRadius.circular(11),
                                           ),
-                                          const SizedBox(width: 8),
-                                        ],
-                                        const Icon(
-                                          Icons.arrow_forward_rounded,
-                                          color: Colors.white,
-                                          size: 24,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-
-                                // Dots Indicator
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: List.generate(4, (index) {
-                                    final isActive = index == _currentSlide;
-                                    return GestureDetector(
-                                      onTap: () => _goToSlide(index),
-                                      child: AnimatedContainer(
-                                        duration: const Duration(
-                                          milliseconds: 350,
-                                        ),
-                                        margin: const EdgeInsets.symmetric(
-                                          horizontal: 3,
-                                        ),
-                                        width: isActive ? 22 : 6,
-                                        height: 6,
-                                        decoration: BoxDecoration(
-                                          color: isActive
-                                              ? const Color(0xFFEF4444)
-                                              : const Color(0xFFE5E7EB),
-                                          borderRadius:
-                                              BorderRadius.circular(3),
                                         ),
                                       ),
-                                    );
-                                  }),
-                                ),
-                              ],
-                            ),
-                          ),
 
-                        // Fullscreen Loading View
-                        if (_isFullscreenLoading)
-                          Center(
-                            child: Stack(
-                              alignment: Alignment.center,
-                              children: [
-                                // Video Player Stack
-                                SizedBox(
-                                  width: 280,
-                                  child: Stack(
-                                    alignment: Alignment.bottomCenter,
-                                    children: [
-                                      if (_videoController.value.isInitialized)
-                                        AspectRatio(
-                                          aspectRatio: _videoController
-                                              .value.aspectRatio,
-                                          child: VideoPlayer(_videoController),
+                                      // Tech Log Text Inside Bar
+                                      Text(
+                                        '$_currentLog ${_progress.round()}%',
+                                        style: GoogleFonts.outfit(
+                                          fontSize: 10.5,
+                                          fontWeight: FontWeight.w800,
+                                          color: Colors.white,
+                                          shadows: const [
+                                            Shadow(
+                                              color: Colors.black54,
+                                              blurRadius: 2,
+                                              offset: Offset(0, 1),
+                                            ),
+                                          ],
+                                          letterSpacing: 0.3,
                                         ),
-
-                                      // White Bottom Mask Patch (7px height)
-                                      Container(
-                                        height: 7,
-                                        color: Colors.white,
                                       ),
                                     ],
                                   ),
                                 ),
-
-                                // Loading Bar Overlay Positioned Exactly at 61% Gap
-                                Positioned(
-                                  top: (size.height > 800 ? 740 : size.height) * 0.61 - 11,
-                                  child: Container(
-                                    width: 260,
-                                    height: 22,
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFFE5E7EB),
-                                      borderRadius: BorderRadius.circular(11),
-                                      boxShadow: const [
-                                        BoxShadow(
-                                          color: Colors.black12,
-                                          blurRadius: 3,
-                                          offset: Offset(0, 1),
-                                        ),
-                                      ],
-                                    ),
-                                    clipBehavior: Clip.antiAlias,
-                                    child: Stack(
-                                      alignment: Alignment.center,
-                                      children: [
-                                        // Dynamic Progress Fill
-                                        Positioned(
-                                          left: 0,
-                                          top: 0,
-                                          bottom: 0,
-                                          width: 260 * (_progress / 100.0),
-                                          child: Container(
-                                            decoration: BoxDecoration(
-                                              gradient: const LinearGradient(
-                                                colors: [
-                                                  Color(0xFFEF4444),
-                                                  Color(0xFFDC2626),
-                                                ],
-                                              ),
-                                              borderRadius:
-                                                  BorderRadius.circular(11),
-                                            ),
-                                          ),
-                                        ),
-
-                                        // Dynamic Tech Log Text inside bar
-                                        Text(
-                                          '$_currentLog ${_progress.round()}%',
-                                          style: GoogleFonts.outfit(
-                                            fontSize: 10.5,
-                                            fontWeight: FontWeight.w800,
-                                            color: Colors.white,
-                                            shadows: const [
-                                              Shadow(
-                                                color: Colors.black54,
-                                                blurRadius: 2,
-                                                offset: Offset(0, 1),
-                                              ),
-                                            ],
-                                            letterSpacing: 0.3,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
-                      ],
-                    ),
-                  ),
+                        ),
+                      ),
+                  ],
                 ),
               ),
 
-              // Home Bar Indicator
+              // Home Indicator Line
               Positioned(
                 bottom: 8,
                 left: 0,
