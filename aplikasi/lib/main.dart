@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -842,7 +843,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
             height: 280,
             child: Container(
               decoration: BoxDecoration(
-                radialGradient: RadialGradient(
+                gradient: RadialGradient(
                   center: const Alignment(0, -0.4),
                   radius: 1.2,
                   colors: [
@@ -865,7 +866,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
                   physics: const BouncingScrollPhysics(),
                   padding: const EdgeInsets.fromLTRB(18, 16, 18, 100),
                   child: Column(
-                    crossAxisAlignment: CrossAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       // Top Header Bar
                       Row(
@@ -1232,7 +1233,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
                             ],
                           ),
                           child: Column(
-                            crossAxisAlignment: CrossAlignment.start,
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               // Card Header (Platform Badge + Creator)
                               Row(
