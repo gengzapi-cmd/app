@@ -1502,7 +1502,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
                                         children: [
                                           Column(
                                             crossAxisAlignment:
-                                                CrossAlignment.start,
+                                                CrossAxisAlignment.start,
                                             children: [
                                               Text(
                                                 opt['res']!,
