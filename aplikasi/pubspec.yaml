@@ -13,6 +13,7 @@ dependencies:
   cupertino_icons: ^1.0.6
   video_player: ^2.8.2
   google_fonts: ^6.1.0
+  flutter_svg: ^2.0.9
 
 dev_dependencies:
   flutter_test:
@@ -23,3 +24,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/videos/kucingnew.mp4
+    - assets/images/tiktok.png
+    - assets/images/yt.png
+    - assets/icons/home.svg
+    - assets/icons/seting.svg
