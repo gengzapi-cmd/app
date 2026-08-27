@@ -692,57 +692,48 @@ class _MainAppScreenState extends State<MainAppScreen> {
         _dropdownLabel = 'Pilih Foto & Format';
         _optionsList = [
           {
-            'res': 'Unduh Semua Foto (ZIP)',
-            'sub': '3 Foto • HD • 8.4 MB',
-            'format': 'ZIP'
+            'res': 'Slide 1 Foto',
+            'sub': 'JPG • 2.1 MB',
+            'format': 'Slide 1 JPG'
           },
           {
-            'res': 'Slide 1 (Foto HD)',
-            'sub': 'JPG • 2.8 MB',
-            'format': 'Foto 1'
+            'res': 'Slide 2 Foto',
+            'sub': 'JPG • 1.9 MB',
+            'format': 'Slide 2 JPG'
           },
           {
-            'res': 'Slide 2 (Foto HD)',
-            'sub': 'JPG • 3.1 MB',
-            'format': 'Foto 2'
+            'res': 'Slide 3 Foto',
+            'sub': 'JPG • 2.4 MB',
+            'format': 'Slide 3 JPG'
           },
           {
-            'res': 'Slide 3 (Foto HD)',
-            'sub': 'JPG • 2.5 MB',
-            'format': 'Foto 3'
-          },
-          {
-            'res': 'Audio Musik (MP3)',
-            'sub': 'MP3 • 3.2 MB',
-            'format': 'Audio'
+            'res': 'Semua Foto (ZIP)',
+            'sub': 'Paket Foto • 6.4 MB',
+            'format': 'Semua Slide ZIP'
           },
         ];
       } else if (isYoutubeLive) {
         _platformType = 'youtube_live';
         _platformName = 'YouTube Live';
-        _creatorHandle = '@GamingChannel';
-        _videoTitle = '🔴 LIVE: Gaming Championship 2026 Final Stream';
+        _creatorHandle = '@LiveGamingHQ';
+        _videoTitle =
+            '🔴 LIVE STREAM - Esports World Championship Final 2026';
         _dropdownLabel = 'Pilih Format & Resolusi';
         _optionsList = [
           {
-            'res': '1080p60 Full HD Live',
-            'sub': 'MP4 • 1.2 GB',
-            'format': 'Live 1080p'
+            'res': '1080p Full HD',
+            'sub': 'MP4 • 450 MB',
+            'format': '1080p Full HD'
           },
           {
-            'res': '720p60 HD Live',
-            'sub': 'MP4 • 650 MB',
-            'format': 'Live 720p'
+            'res': '720p HD',
+            'sub': 'MP4 • 210 MB',
+            'format': '720p HD'
           },
           {
-            'res': '480p SD Live',
-            'sub': 'MP4 • 320 MB',
-            'format': 'Live 480p'
-          },
-          {
-            'res': 'Audio Stream (MP3)',
-            'sub': 'MP3 • 45.0 MB',
-            'format': 'Live MP3'
+            'res': 'Audio',
+            'sub': 'MP3 • 45 MB',
+            'format': 'Audio MP3'
           },
         ];
       } else if (isYoutubeShorts) {
@@ -753,19 +744,19 @@ class _MainAppScreenState extends State<MainAppScreen> {
         _dropdownLabel = 'Pilih Format & Resolusi';
         _optionsList = [
           {
-            'res': '1080p Shorts HD',
-            'sub': 'MP4 • 18.5 MB',
-            'format': 'Shorts 1080p'
+            'res': '1080p Full HD',
+            'sub': 'MP4 • 18.2 MB',
+            'format': 'YouTube Shorts 1080p'
           },
           {
-            'res': '720p Shorts',
-            'sub': 'MP4 • 9.8 MB',
-            'format': 'Shorts 720p'
+            'res': '720p HD',
+            'sub': 'MP4 • 10.5 MB',
+            'format': 'YouTube Shorts 720p'
           },
           {
-            'res': 'Audio Shorts (MP3)',
-            'sub': 'MP3 • 2.1 MB',
-            'format': 'Shorts MP3'
+            'res': 'Audio',
+            'sub': 'MP3 • 2.5 MB',
+            'format': 'YouTube Shorts MP3'
           },
         ];
       } else if (isYoutubeStandard) {
@@ -1401,7 +1392,11 @@ class _MainAppScreenState extends State<MainAppScreen> {
                                             ? 16 / 9
                                             : 9 / 12,
                                     child: Image.network(
-                                      'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=800&auto=format&fit=crop&q=80',
+                                      _platformType == 'youtube_live'
+                                          ? 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=800&auto=format&fit=crop&q=80'
+                                          : _platformType == 'youtube_shorts'
+                                              ? 'https://images.unsplash.com/photo-1520116468816-95b69f847357?w=800&auto=format&fit=crop&q=80'
+                                              : 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=800&auto=format&fit=crop&q=80',
                                       fit: BoxFit.cover,
                                     ),
                                   ),
@@ -1563,7 +1558,10 @@ class _MainAppScreenState extends State<MainAppScreen> {
                                                   ),
                                                   const SizedBox(width: 4),
                                                   Text(
-                                                    'Unduh',
+                                                    opt['format'] ==
+                                                            'Semua Slide ZIP'
+                                                        ? 'Unduh ZIP'
+                                                        : 'Unduh',
                                                     style: GoogleFonts.outfit(
                                                       fontSize: 12,
                                                       fontWeight:
