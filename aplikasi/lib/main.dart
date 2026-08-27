@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:video_player/video_player.dart';
 
@@ -24,7 +23,60 @@ class SnipsterApp extends StatelessWidget {
         textTheme: GoogleFonts.outfitTextTheme(),
         useMaterial3: true,
       ),
-      home: const OnboardingScreen(),
+      home: const RootScreen(),
+    );
+  }
+}
+
+/// RootScreen manages the Stacked Layering:
+/// Layer 0 (Bottom): MainAppScreen (always ready underneath)
+/// Layer 1 (Top): SplashOverlay Container (fades out smoothly over 2.0 seconds when loading completes)
+class RootScreen extends StatefulWidget {
+  const RootScreen({super.key});
+
+  @override
+  State<RootScreen> createState() => _RootScreenState();
+}
+
+class _RootScreenState extends State<RootScreen> {
+  bool _splashVisible = true;
+  double _splashOpacity = 1.0;
+
+  void _onLoadingFinished() {
+    // Smooth 2.0 Second Fade Out (2000ms) matching index.html prototype
+    setState(() {
+      _splashOpacity = 0.0;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: Stack(
+        children: [
+          // MAIN APP SCREEN - PLACED UNDERNEATH AT ALL TIMES
+          const MainAppScreen(),
+
+          // SPLASH SCREEN OVERLAY - PLACED ON TOP FOR SLOW FADE OUT
+          if (_splashVisible)
+            AnimatedOpacity(
+              duration: const Duration(milliseconds: 2000),
+              curve: Curves.easeInOut,
+              opacity: _splashOpacity,
+              onEnd: () {
+                if (_splashOpacity == 0.0) {
+                  setState(() {
+                    _splashVisible = false;
+                  });
+                }
+              },
+              child: SplashOverlay(
+                onLoadingFinished: _onLoadingFinished,
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -43,26 +95,38 @@ class OnboardingSlide {
   });
 }
 
-class OnboardingScreen extends StatefulWidget {
-  const OnboardingScreen({super.key});
+class SplashOverlay extends StatefulWidget {
+  final VoidCallback onLoadingFinished;
+
+  const SplashOverlay({
+    super.key,
+    required this.onLoadingFinished,
+  });
 
   @override
-  State<OnboardingScreen> createState() => _OnboardingScreenState();
+  State<SplashOverlay> createState() => _SplashOverlayState();
 }
 
-class _OnboardingScreenState extends State<OnboardingScreen>
+class _SplashOverlayState extends State<SplashOverlay>
     with TickerProviderStateMixin {
   int _currentSlide = 0;
-  bool _isLoadingStarted = false;
-  bool _showLoadingContent = false;
+
+  // Animation States for startAppLoading Sequence
+  bool _isFadingOutOnboarding = false;
+  bool _hideOnboardingContent = false;
+  bool _isSheetFullscreen = false;
+  bool _showLoadingScreen = false;
   double _loadingFadeOpacity = 0.0;
-  double _screenOpacity = 1.0;
+
+  // Progress Bar State
   double _progress = 0.0;
   String _currentLog = "MENYIAPKAN CORE ENGINE...";
 
-  late VideoPlayerController _videoController;
+  // Controllers
+  late AnimationController _entranceController;
   late AnimationController _spinController;
-  late AnimationController _slideFadeController;
+  late AnimationController _slideTextController;
+  late VideoPlayerController _videoController;
   Timer? _progressTimer;
 
   final List<OnboardingSlide> _slides = const [
@@ -71,7 +135,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       tag: "Tutorial",
       title: "Salin Tautan",
       subtitle:
-          "Temukan video di platform favorit anda, klik bagikan lalu klik salin tautan",
+          "Temukan video di platfrom favorit anda, klik bagikan lalu klik salin tautan",
     ),
     OnboardingSlide(
       icon: Icons.content_paste_rounded,
@@ -98,143 +162,166 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   void initState() {
     super.initState();
 
+    // Initial Load Entrance Pop-In Animation (0.8s)
+    _entranceController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 850),
+    );
+
+    // Spin Right 360° + Scale Pulse Controller (0.55s)
     _spinController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 550),
     );
 
-    _slideFadeController = AnimationController(
+    // Slide Body Text Fade-Out Down & Slide-In Up Controller (0.35s)
+    _slideTextController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 350),
       value: 1.0,
     );
 
+    // Initialize Video Controller
     _videoController = VideoPlayerController.asset(
       'assets/videos/kucingnew.mp4',
     )..initialize().then((_) {
         _videoController.setLooping(true);
         if (mounted) setState(() {});
       });
+
+    // Start Initial Entrance Animation
+    _entranceController.forward();
   }
 
   @override
   void dispose() {
+    _entranceController.dispose();
     _spinController.dispose();
-    _slideFadeController.dispose();
+    _slideTextController.dispose();
     _videoController.dispose();
     _progressTimer?.cancel();
     super.dispose();
   }
 
   void _goToSlide(int index) {
-    if (index == _currentSlide) return;
+    if (index == _currentSlide || _isFadingOutOnboarding) return;
 
+    // Trigger Spin 360° Animation
     _spinController.forward(from: 0.0);
-    _slideFadeController.reverse().then((_) {
+
+    // Slide Text Fade-Out Down
+    _slideTextController.reverse().then((_) {
       if (mounted) {
         setState(() {
           _currentSlide = index;
         });
-        _slideFadeController.forward();
+        // Slide Text Slide-In Up
+        _slideTextController.forward();
       }
     });
   }
 
-  void _handleNextAction() {
-    if (_currentSlide < 3) {
-      _goToSlide(_currentSlide + 1);
+  void _handleActionClick() {
+    if (_isFadingOutOnboarding) return;
+
+    if (_currentSlide == 3) {
+      _startAppLoadingSequence();
     } else {
-      _startAppLoading();
+      _goToSlide(_currentSlide + 1);
     }
   }
 
-  void _startAppLoading() {
+  /// Exact 100% Timing & Sequence from index.html prototype `startAppLoading()`:
+  /// 1. Logo Box & Onboarding content FADE OUT over 1.0 SECOND (1000ms).
+  /// 2. Visible 1-SECOND DELAY (1000ms) before upward glide.
+  /// 3. Bottom Sheet glides UP smoothly to top (-34px) in 0.65s (650ms).
+  /// 4. Fade in loading screen (0.5s) & start cat video + 5.0s progress bar.
+  /// 5. At 100%, wait 400ms delay then call `onLoadingFinished` to trigger 2.0s Fade Out.
+  void _startAppLoadingSequence() {
+    // Step 1: Fade out logo box and onboarding content over 1.0s
     setState(() {
-      _isLoadingStarted = true;
+      _isFadingOutOnboarding = true;
     });
 
-    Future.delayed(const Duration(milliseconds: 650), () {
+    // Step 2: After 1000ms delay, hide content and glide sheet upwards
+    Future.delayed(const Duration(milliseconds: 1000), () {
       if (!mounted) return;
 
       setState(() {
-        _showLoadingContent = true;
+        _hideOnboardingContent = true;
+        _isSheetFullscreen = true;
       });
 
-      Future.microtask(() {
+      // Step 3: After sheet reaches top (650ms delay), fade in loading screen
+      Future.delayed(const Duration(milliseconds: 650), () {
         if (!mounted) return;
+
         setState(() {
-          _loadingFadeOpacity = 1.0;
+          _showLoadingScreen = true;
         });
+
+        // Trigger loading screen fade-in opacity (500ms)
+        Future.microtask(() {
+          if (mounted) {
+            setState(() {
+              _loadingFadeOpacity = 1.0;
+            });
+          }
+        });
+
+        // Start playing video at 0.7x speed
+        _videoController.seekTo(Duration.zero);
+        _videoController.setPlaybackSpeed(0.7);
+        _videoController.play();
+
+        // Start 5.0 Second Progress Bar Interval (50ms step = 1% per step)
+        const totalDurationMs = 5000;
+        const updateIntervalMs = 50;
+        final stepIncrement = 100.0 / (totalDurationMs / updateIntervalMs);
+
+        _progressTimer = Timer.periodic(
+          const Duration(milliseconds: updateIntervalMs),
+          (timer) {
+            if (!mounted) return;
+
+            setState(() {
+              _progress += stepIncrement;
+              if (_progress > 100) _progress = 100;
+
+              final pct = _progress.round();
+              if (pct <= 20) {
+                _currentLog = "MENYIAPKAN CORE ENGINE...";
+              } else if (pct <= 40) {
+                _currentLog = "MENGINSTALL LIBRARY MEDIA...";
+              } else if (pct <= 65) {
+                _currentLog = "MENGINSTALL FFMPEG DECODER...";
+              } else if (pct <= 85) {
+                _currentLog = "MENGHUBUNGKAN AKSELERASI...";
+              } else if (pct < 100) {
+                _currentLog = "MEMVERIFIKASI SISTEM...";
+              } else {
+                _currentLog = "SELESAI";
+              }
+
+              if (_progress >= 90) {
+                _videoController.setPlaybackSpeed(1.0);
+              }
+
+              if (_progress >= 100) {
+                timer.cancel();
+                _currentLog = "SELESAI 100%";
+
+                // Step 4: After 400ms delay, call onLoadingFinished to trigger 2.0s Fade Out
+                Future.delayed(const Duration(milliseconds: 400), () {
+                  if (mounted) {
+                    widget.onLoadingFinished();
+                  }
+                });
+              }
+            });
+          },
+        );
       });
-
-      _videoController.seekTo(Duration.zero);
-      _videoController.setPlaybackSpeed(0.7);
-      _videoController.play();
-
-      const totalDurationMs = 5000;
-      const updateIntervalMs = 50;
-      final stepIncrement = 100.0 / (totalDurationMs / updateIntervalMs);
-
-      _progressTimer = Timer.periodic(
-        const Duration(milliseconds: updateIntervalMs),
-        (timer) {
-          if (!mounted) return;
-
-          setState(() {
-            _progress += stepIncrement;
-            if (_progress > 100) _progress = 100;
-
-            final pct = _progress.round();
-            if (pct <= 20) {
-              _currentLog = "MENYIAPKAN CORE ENGINE...";
-            } else if (pct <= 40) {
-              _currentLog = "MENGINSTALL LIBRARY MEDIA...";
-            } else if (pct <= 65) {
-              _currentLog = "MENGINSTALL FFMPEG DECODER...";
-            } else if (pct <= 85) {
-              _currentLog = "MENGHUBUNGKAN AKSELERASI...";
-            } else if (pct < 100) {
-              _currentLog = "MEMVERIFIKASI SISTEM...";
-            } else {
-              _currentLog = "SELESAI";
-            }
-
-            if (_progress >= 90) {
-              _videoController.setPlaybackSpeed(1.0);
-            }
-
-            if (_progress >= 100) {
-              timer.cancel();
-              _currentLog = "SELESAI 100%";
-
-              Future.delayed(const Duration(milliseconds: 500), () {
-                if (mounted) {
-                  setState(() {
-                    _screenOpacity = 0.0;
-                  });
-                  Future.delayed(const Duration(milliseconds: 400), () {
-                    if (mounted) {
-                      Navigator.of(context).pushReplacement(
-                        PageRouteBuilder(
-                          pageBuilder: (_, __, ___) => const MainAppScreen(),
-                          transitionsBuilder: (_, animation, __, child) {
-                            return FadeTransition(
-                              opacity: animation,
-                              child: child,
-                            );
-                          },
-                          transitionDuration:
-                              const Duration(milliseconds: 800),
-                        ),
-                      );
-                    }
-                  });
-                }
-              });
-            }
-          });
-        },
-      );
     });
   }
 
@@ -245,287 +332,376 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     final screenWidth = mediaQuery.size.width;
     final currentSlideData = _slides[_currentSlide];
 
-    return Scaffold(
-      backgroundColor: const Color(0xFF991B1B),
-      body: AnimatedOpacity(
-        duration: const Duration(milliseconds: 600),
-        opacity: _screenOpacity,
-        child: SizedBox(
-          width: screenWidth,
-          height: screenHeight,
-          child: Stack(
-            children: [
-              Container(
-                width: double.infinity,
-                height: double.infinity,
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      Color(0xFFF87171),
-                      Color(0xFFEF4444),
-                      Color(0xFF991B1B),
-                    ],
-                  ),
+    return SizedBox(
+      width: screenWidth,
+      height: screenHeight,
+      child: Stack(
+        children: [
+          // AMBIENT ROSE-RED BACKGROUND WITH SOFT MESH OVERLAY
+          Positioned.fill(
+            child: Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Color(0xFFF87171),
+                    Color(0xFFEF4444),
+                    Color(0xFF991B1B),
+                  ],
+                  stops: [0.0, 0.45, 1.0],
                 ),
               ),
-
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                height: screenHeight * 0.6,
-                child: Opacity(
-                  opacity: 0.15,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      gradient: RadialGradient(
-                        colors: [
-                          Colors.white.withOpacity(0.4),
-                          Colors.transparent,
-                        ],
-                        radius: 0.8,
+              child: Stack(
+                children: [
+                  // Soft Radial Mesh Pattern Overlay
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: screenHeight * 0.6,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: RadialGradient(
+                          center: const Alignment(0, -0.4),
+                          radius: 0.85,
+                          colors: [
+                            Colors.white.withOpacity(0.22),
+                            Colors.transparent,
+                          ],
+                        ),
                       ),
                     ),
                   ),
-                ),
+                ],
               ),
+            ),
+          ),
 
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 650),
-                curve: const Cubic(0.16, 1.0, 0.3, 1.0),
-                top: _isLoadingStarted ? -34.0 : (screenHeight - 395.0),
-                left: 0,
-                right: 0,
-                height: _isLoadingStarted ? (screenHeight + 34.0) : 395.0,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.elliptical(180, 34),
-                      topRight: Radius.elliptical(180, 34),
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.12),
-                        blurRadius: 40,
-                        offset: const Offset(0, -12),
-                      ),
-                    ],
+          // PURE WHITE BOTTOM SHEET CONTAINER (Z-INDEX 100)
+          AnimatedPositioned(
+            duration: const Duration(milliseconds: 650),
+            curve: const Cubic(0.16, 1.0, 0.3, 1.0),
+            top: _isSheetFullscreen ? -34.0 : (screenHeight - 395.0),
+            left: 0,
+            right: 0,
+            height: _isSheetFullscreen ? (screenHeight + 34.0) : 395.0,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.elliptical(180, 34),
+                  topRight: Radius.elliptical(180, 34),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.12),
+                    blurRadius: 40,
+                    offset: const Offset(0, -12),
                   ),
-                  child: Stack(
-                    clipBehavior: Clip.none,
-                    alignment: Alignment.topCenter,
-                    children: [
-                      if (!_isLoadingStarted)
-                        Positioned(
-                          top: -43,
-                          child: RotationTransition(
-                            turns: Tween(begin: 0.0, end: 1.0).animate(
-                              CurvedAnimation(
-                                parent: _spinController,
-                                curve: Curves.easeInOutBack,
-                              ),
-                            ),
-                            child: Container(
-                              width: 86,
-                              height: 86,
-                              decoration: BoxDecoration(
-                                color: Colors.black,
-                                borderRadius: BorderRadius.circular(24),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.4),
-                                    blurRadius: 32,
-                                    offset: const Offset(0, 14),
+                ],
+              ),
+              child: Stack(
+                clipBehavior: Clip.none,
+                alignment: Alignment.topCenter,
+                children: [
+                  // FLOATING BLACK LOGO BOX WITH SPIN 360° & SCALE PULSE
+                  if (!_hideOnboardingContent)
+                    Positioned(
+                      top: -43,
+                      child: AnimatedOpacity(
+                        duration: const Duration(milliseconds: 1000),
+                        curve: Curves.ease,
+                        opacity: _isFadingOutOnboarding ? 0.0 : 1.0,
+                        child: AnimatedScale(
+                          duration: const Duration(milliseconds: 1000),
+                          curve: Curves.ease,
+                          scale: _isFadingOutOnboarding ? 0.5 : 1.0,
+                          child: AnimatedBuilder(
+                            animation: Listenable.merge([
+                              _entranceController,
+                              _spinController,
+                            ]),
+                            builder: (context, child) {
+                              // Entrance Pop-In Animation (scale 0.3 -> 1.0, rotate -15deg -> 0deg)
+                              final entranceVal = CurvedAnimation(
+                                parent: _entranceController,
+                                curve: const Cubic(0.34, 1.56, 0.64, 1.0),
+                              ).value;
+                              final entranceScale = 0.3 + (0.7 * entranceVal);
+                              final entranceRotate =
+                                  -0.26 * (1.0 - entranceVal); // ~ -15deg
+
+                              // Spin Right 360° Animation on Slide Change with Scale Pulse (0.85 -> 1.18 -> 1.0)
+                              final spinVal = _spinController.value;
+                              final spinRotate = spinVal * 2 * 3.14159265;
+                              double spinScale = 1.0;
+                              if (spinVal > 0 && spinVal < 0.5) {
+                                spinScale = 1.0 - (0.15 * (spinVal / 0.5));
+                              } else if (spinVal >= 0.5) {
+                                spinScale = 0.85 + (0.15 * ((spinVal - 0.5) / 0.5));
+                              }
+
+                              return Transform.scale(
+                                scale: entranceScale * spinScale,
+                                child: Transform.rotate(
+                                  angle: entranceRotate + spinRotate,
+                                  child: Container(
+                                    width: 86,
+                                    height: 86,
+                                    decoration: BoxDecoration(
+                                      color: Colors.black,
+                                      borderRadius: BorderRadius.circular(24),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.4),
+                                          blurRadius: 32,
+                                          offset: const Offset(0, 14),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Center(
+                                      child: Icon(
+                                        currentSlideData.icon,
+                                        color: Colors.white,
+                                        size: 42,
+                                      ),
+                                    ),
                                   ),
-                                ],
-                              ),
-                              child: Center(
-                                child: Icon(
-                                  currentSlideData.icon,
-                                  color: Colors.white,
-                                  size: 42,
                                 ),
-                              ),
-                            ),
+                              );
+                            },
                           ),
                         ),
+                      ),
+                    ),
 
-                      if (!_isLoadingStarted)
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(24, 48, 24, 28),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              FadeTransition(
-                                opacity: _slideFadeController,
-                                child: Column(
+                  // ONBOARDING SHEET CONTENT (TAG, TITLE, SUBTITLE, BUTTON, DOTS)
+                  if (!_hideOnboardingContent)
+                    AnimatedOpacity(
+                      duration: const Duration(milliseconds: 1000),
+                      curve: Curves.ease,
+                      opacity: _isFadingOutOnboarding ? 0.0 : 1.0,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(24, 64, 24, 20),
+                        child: Column(
+                          children: [
+                            // Animated Slide Body
+                            Expanded(
+                              child: AnimatedBuilder(
+                                animation: _slideTextController,
+                                builder: (context, child) {
+                                  final val = _slideTextController.value;
+                                  final opacity = val;
+                                  // Fade-out down (offset 10), slide-in up (offset -10 to 0)
+                                  final dy = (1.0 - val) * 10.0;
+
+                                  return Transform.translate(
+                                    offset: Offset(0, dy),
+                                    child: Opacity(
+                                      opacity: opacity,
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const SizedBox(height: 6),
+                                          // RED PILL TAG
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 20,
+                                              vertical: 6,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: const Color(0xFFFEE2E2),
+                                              borderRadius:
+                                                  BorderRadius.circular(14),
+                                            ),
+                                            child: Text(
+                                              currentSlideData.tag,
+                                              style: GoogleFonts.outfit(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.bold,
+                                                color: const Color(0xFFDC2626),
+                                                letterSpacing: 0.3,
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(height: 10),
+                                          // TITLE
+                                          Text(
+                                            currentSlideData.title,
+                                            style: GoogleFonts.outfit(
+                                              fontSize: 28,
+                                              fontWeight: FontWeight.w800,
+                                              color: const Color(0xFF111827),
+                                              letterSpacing: -0.5,
+                                              height: 1.15,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          // SUBTITLE
+                                          SizedBox(
+                                            height: 44,
+                                            child: Center(
+                                              child: Text(
+                                                currentSlideData.subtitle,
+                                                textAlign: TextAlign.center,
+                                                maxLines: 2,
+                                                style: GoogleFonts.inter(
+                                                  fontSize: 15,
+                                                  fontWeight: FontWeight.w500,
+                                                  color: const Color(0xFF6B7280),
+                                                  height: 1.4,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+
+                            // DYNAMIC ACTION BUTTON (Morphs from round 56x56 to 220 start button)
+                            GestureDetector(
+                              onTap: _handleActionClick,
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 350),
+                                curve: const Cubic(0.34, 1.56, 0.64, 1.0),
+                                height: 56,
+                                width: _currentSlide == 3 ? 220 : 56,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFEF4444),
+                                  gradient: _currentSlide == 3
+                                      ? const LinearGradient(
+                                          begin: Alignment.topLeft,
+                                          end: Alignment.bottomRight,
+                                          colors: [
+                                            Color(0xFFEF4444),
+                                            Color(0xFFDC2626),
+                                          ],
+                                        )
+                                      : null,
+                                  borderRadius: BorderRadius.circular(
+                                    _currentSlide == 3 ? 18 : 16,
+                                  ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: const Color(0xFFEF4444)
+                                          .withOpacity(0.4),
+                                      blurRadius: 24,
+                                      offset: const Offset(0, 10),
+                                    ),
+                                  ],
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 20,
-                                        vertical: 6,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFFFEE2E2),
-                                        borderRadius:
-                                            BorderRadius.circular(14),
-                                      ),
-                                      child: Text(
-                                        currentSlideData.tag,
+                                    if (_currentSlide == 3) ...[
+                                      Text(
+                                        'Mulai Sekarang',
                                         style: GoogleFonts.outfit(
-                                          fontSize: 14,
+                                          fontSize: 16,
                                           fontWeight: FontWeight.bold,
-                                          color: const Color(0xFFDC2626),
-                                          letterSpacing: 0.3,
+                                          color: Colors.white,
+                                          letterSpacing: 0.2,
                                         ),
                                       ),
-                                    ),
-                                    const SizedBox(height: 12),
-                                    Text(
-                                      currentSlideData.title,
-                                      style: GoogleFonts.outfit(
-                                        fontSize: 28,
-                                        fontWeight: FontWeight.w800,
-                                        color: const Color(0xFF111827),
-                                        letterSpacing: -0.5,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Text(
-                                      currentSlideData.subtitle,
-                                      textAlign: TextAlign.center,
-                                      style: GoogleFonts.inter(
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w500,
-                                        color: const Color(0xFF6B7280),
-                                        height: 1.4,
-                                      ),
+                                      const SizedBox(width: 8),
+                                    ],
+                                    const Icon(
+                                      Icons.arrow_forward_rounded,
+                                      color: Colors.white,
+                                      size: 22,
                                     ),
                                   ],
                                 ),
                               ),
-                              GestureDetector(
-                                onTap: _handleNextAction,
-                                child: AnimatedContainer(
-                                  duration: const Duration(milliseconds: 350),
-                                  curve: Curves.easeOutBack,
-                                  height: 56,
-                                  width: _currentSlide == 3 ? 220 : 56,
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFEF4444),
-                                    gradient: _currentSlide == 3
-                                        ? const LinearGradient(
-                                            colors: [
-                                              Color(0xFFEF4444),
-                                              Color(0xFFDC2626),
-                                            ],
-                                          )
-                                        : null,
-                                    borderRadius: BorderRadius.circular(
-                                      _currentSlide == 3 ? 18 : 16,
-                                    ),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: const Color(0xFFEF4444)
-                                            .withOpacity(0.4),
-                                        blurRadius: 24,
-                                        offset: const Offset(0, 10),
-                                      ),
-                                    ],
-                                  ),
-                                  child: Row(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.center,
-                                    children: [
-                                      if (_currentSlide == 3) ...[
-                                        Text(
-                                          'Mulai Sekarang',
-                                          style: GoogleFonts.outfit(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.white,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                      ],
-                                      const Icon(
-                                        Icons.arrow_forward_rounded,
-                                        color: Colors.white,
-                                        size: 24,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: List.generate(4, (index) {
-                                  final isActive = index == _currentSlide;
-                                  return GestureDetector(
-                                    onTap: () => _goToSlide(index),
-                                    child: AnimatedContainer(
-                                      duration: const Duration(
-                                        milliseconds: 350,
-                                      ),
-                                      margin: const EdgeInsets.symmetric(
-                                        horizontal: 3,
-                                      ),
-                                      width: isActive ? 22 : 6,
-                                      height: 6,
-                                      decoration: BoxDecoration(
-                                        color: isActive
-                                            ? const Color(0xFFEF4444)
-                                            : const Color(0xFFE5E7EB),
-                                        borderRadius:
-                                            BorderRadius.circular(3),
-                                      ),
-                                    ),
-                                  );
-                                }),
-                              ),
-                            ],
-                          ),
-                        ),
+                            ),
+                            const SizedBox(height: 20),
 
-                      if (_showLoadingContent)
-                        AnimatedOpacity(
-                          duration: const Duration(milliseconds: 500),
-                          opacity: _loadingFadeOpacity,
-                          child: Center(
-                            child: SizedBox(
-                              width: screenWidth > 340
-                                  ? 320
-                                  : screenWidth * 0.9,
-                              child: Stack(
+                            // 4 CAROUSEL DOTS
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: List.generate(4, (index) {
+                                final isActive = index == _currentSlide;
+                                return GestureDetector(
+                                  onTap: () => _goToSlide(index),
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 350),
+                                    curve: const Cubic(0.34, 1.56, 0.64, 1.0),
+                                    margin: const EdgeInsets.symmetric(
+                                      horizontal: 3,
+                                    ),
+                                    width: isActive ? 22 : 6,
+                                    height: 6,
+                                    decoration: BoxDecoration(
+                                      color: isActive
+                                          ? const Color(0xFFEF4444)
+                                          : const Color(0xFFE5E7EB),
+                                      borderRadius: BorderRadius.circular(3),
+                                    ),
+                                  ),
+                                );
+                              }),
+                            ),
+                            const SizedBox(height: 10),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                  // FULLSCREEN LOADING INTERFACE WITH INTEGRATED PROGRESS BAR
+                  if (_showLoadingScreen)
+                    AnimatedOpacity(
+                      duration: const Duration(milliseconds: 500),
+                      curve: Curves.ease,
+                      opacity: _loadingFadeOpacity,
+                      child: Center(
+                        child: SizedBox(
+                          width: 280,
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              // VIDEO CAT CONTAINER WITH MASKING PATCH
+                              Stack(
                                 alignment: Alignment.center,
                                 children: [
-                                  Stack(
-                                    alignment: Alignment.bottomCenter,
-                                    children: [
-                                      if (_videoController.value.isInitialized)
-                                        AspectRatio(
-                                          aspectRatio:
-                                              _videoController.value.aspectRatio,
-                                          child: VideoPlayer(_videoController),
-                                        )
-                                      else
-                                        const SizedBox(
-                                          height: 180,
-                                          child: Center(
-                                            child: CircularProgressIndicator(
-                                              color: Color(0xFFEF4444),
+                                  Container(
+                                    width: 280,
+                                    color: Colors.transparent,
+                                    child: Stack(
+                                      alignment: Alignment.bottomCenter,
+                                      children: [
+                                        if (_videoController
+                                            .value.isInitialized)
+                                          AspectRatio(
+                                            aspectRatio: _videoController
+                                                .value.aspectRatio,
+                                            child:
+                                                VideoPlayer(_videoController),
+                                          )
+                                        else
+                                          const SizedBox(
+                                            height: 180,
+                                            child: Center(
+                                              child: CircularProgressIndicator(
+                                                color: Color(0xFFEF4444),
+                                              ),
                                             ),
                                           ),
+                                        // Micro White Mask Patch at bottom edge
+                                        Container(
+                                          height: 7,
+                                          width: double.infinity,
+                                          color: Colors.white,
                                         ),
-                                      Container(
-                                        height: 7,
-                                        color: Colors.white,
-                                      ),
-                                    ],
+                                      ],
+                                    ),
                                   ),
+
+                                  // LOADING BAR OVERLAY IN GAP BETWEEN CAT BODY AND TAIL
                                   Positioned(
                                     top: 136,
                                     child: Container(
@@ -546,6 +722,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                                       child: Stack(
                                         alignment: Alignment.center,
                                         children: [
+                                          // Red Gradient Progress Fill Track
                                           Positioned(
                                             left: 0,
                                             top: 0,
@@ -564,20 +741,21 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                                               ),
                                             ),
                                           ),
+
+                                          // HIGH CONTRAST CRISP LOG TEXT INSIDE PROGRESS BAR
                                           Text(
                                             '$_currentLog ${_progress.round()}%',
                                             style: GoogleFonts.outfit(
                                               fontSize: 10.5,
                                               fontWeight: FontWeight.w800,
-                                              color: Colors.white,
+                                              color: const Color(0xFF111827),
+                                              letterSpacing: 0.3,
                                               shadows: const [
                                                 Shadow(
-                                                  color: Colors.black54,
+                                                  color: Colors.white70,
                                                   blurRadius: 2,
-                                                  offset: Offset(0, 1),
                                                 ),
                                               ],
-                                              letterSpacing: 0.3,
                                             ),
                                           ),
                                         ],
@@ -586,32 +764,33 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                                   ),
                                 ],
                               ),
-                            ),
+                            ],
                           ),
                         ),
-                    ],
-                  ),
-                ),
-              ),
-
-              Positioned(
-                bottom: 8,
-                left: 0,
-                right: 0,
-                child: Center(
-                  child: Container(
-                    width: 120,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF111827).withOpacity(0.8),
-                      borderRadius: BorderRadius.circular(2),
+                      ),
                     ),
-                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // IPHONE BOTTOM HOME INDICATOR BAR
+          Positioned(
+            bottom: 8,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Container(
+                width: 120,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF111827).withOpacity(0.8),
+                  borderRadius: BorderRadius.circular(2),
                 ),
               ),
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -820,8 +999,6 @@ class _MainAppScreenState extends State<MainAppScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final mediaQuery = MediaQuery.of(context);
-
     return Scaffold(
       backgroundColor: const Color(0xFFFAFAFA),
       body: Stack(
@@ -868,27 +1045,23 @@ class _MainAppScreenState extends State<MainAppScreen> {
                               Container(
                                 width: 42,
                                 height: 42,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: Colors.white,
-                                  border: Border.all(
-                                    color: const Color(0xFFEF4444)
-                                        .withOpacity(0.3),
-                                    width: 2,
-                                  ),
+                                decoration: const BoxDecoration(
+                                  color: Colors.black,
+                                  borderRadius:
+                                      BorderRadius.all(Radius.circular(12)),
                                   boxShadow: [
                                     BoxShadow(
-                                      color: Colors.black.withOpacity(0.08),
+                                      color: Colors.black12,
                                       blurRadius: 10,
-                                      offset: const Offset(0, 4),
+                                      offset: Offset(0, 4),
                                     ),
                                   ],
                                 ),
                                 child: const Center(
                                   child: Icon(
-                                    Icons.person_rounded,
-                                    color: Color(0xFFEF4444),
-                                    size: 24,
+                                    Icons.share_rounded,
+                                    color: Colors.white,
+                                    size: 22,
                                   ),
                                 ),
                               ),
@@ -897,19 +1070,12 @@ class _MainAppScreenState extends State<MainAppScreen> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    'Selamat Datang 👋',
-                                    style: GoogleFonts.inter(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w500,
-                                      color: const Color(0xFF6B7280),
-                                    ),
-                                  ),
-                                  Text(
                                     'SnapCat',
                                     style: GoogleFonts.outfit(
-                                      fontSize: 18,
+                                      fontSize: 22,
                                       fontWeight: FontWeight.w800,
                                       color: const Color(0xFF111827),
+                                      letterSpacing: -0.5,
                                     ),
                                   ),
                                 ],
@@ -917,8 +1083,8 @@ class _MainAppScreenState extends State<MainAppScreen> {
                             ],
                           ),
                           Container(
-                            width: 38,
-                            height: 38,
+                            width: 40,
+                            height: 40,
                             decoration: BoxDecoration(
                               color: Colors.white,
                               shape: BoxShape.circle,
@@ -933,7 +1099,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
                             child: const Center(
                               child: Icon(
                                 Icons.notifications_none_rounded,
-                                color: Color(0xFF374151),
+                                color: Color(0xFF111827),
                                 size: 20,
                               ),
                             ),
@@ -944,19 +1110,18 @@ class _MainAppScreenState extends State<MainAppScreen> {
 
                       // Input Bar Card
                       Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 8),
+                        padding: const EdgeInsets.fromLTRB(16, 6, 6, 6),
                         decoration: BoxDecoration(
                           color: Colors.white,
-                          borderRadius: BorderRadius.circular(22),
+                          borderRadius: BorderRadius.circular(28),
                           border: Border.all(
-                            color: const Color(0xFFEF4444).withOpacity(0.25),
-                            width: 1.5,
+                            color: const Color(0xFFF3F4F6),
+                            width: 1.0,
                           ),
                           boxShadow: [
                             BoxShadow(
-                              color: const Color(0xFFEF4444).withOpacity(0.08),
-                              blurRadius: 16,
+                              color: Colors.black.withOpacity(0.04),
+                              blurRadius: 20,
                               offset: const Offset(0, 6),
                             ),
                           ],
@@ -966,22 +1131,22 @@ class _MainAppScreenState extends State<MainAppScreen> {
                             const Icon(
                               Icons.link_rounded,
                               color: Color(0xFF9CA3AF),
-                              size: 22,
+                              size: 20,
                             ),
-                            const SizedBox(width: 8),
+                            const SizedBox(width: 10),
                             Expanded(
                               child: TextField(
                                 controller: _linkController,
                                 onSubmitted: (_) => _triggerSearch(),
                                 style: GoogleFonts.inter(
-                                  fontSize: 14,
+                                  fontSize: 13,
                                   fontWeight: FontWeight.w500,
                                   color: const Color(0xFF111827),
                                 ),
                                 decoration: InputDecoration(
-                                  hintText: 'Tempelkan tautan video di sini...',
+                                  hintText: 'Tempel tautan disini',
                                   hintStyle: GoogleFonts.inter(
-                                    fontSize: 13.5,
+                                    fontSize: 13,
                                     color: const Color(0xFF9CA3AF),
                                   ),
                                   border: InputBorder.none,
@@ -990,44 +1155,23 @@ class _MainAppScreenState extends State<MainAppScreen> {
                               ),
                             ),
                             GestureDetector(
-                              onTap: _pasteFromClipboard,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 10, vertical: 6),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFF3F4F6),
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: Text(
-                                  'Tempel',
-                                  style: GoogleFonts.outfit(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                    color: const Color(0xFF4B5563),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            GestureDetector(
                               onTap: () => _triggerSearch(),
                               child: Container(
-                                width: 42,
-                                height: 42,
-                                decoration: BoxDecoration(
-                                  gradient: const LinearGradient(
+                                width: 40,
+                                height: 40,
+                                decoration: const BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  gradient: LinearGradient(
                                     colors: [
                                       Color(0xFFEF4444),
                                       Color(0xFFDC2626),
                                     ],
                                   ),
-                                  borderRadius: BorderRadius.circular(14),
                                   boxShadow: [
                                     BoxShadow(
-                                      color: const Color(0xFFEF4444)
-                                          .withOpacity(0.35),
-                                      blurRadius: 10,
-                                      offset: const Offset(0, 4),
+                                      color: Color(0x59EF4444),
+                                      blurRadius: 12,
+                                      offset: Offset(0, 4),
                                     ),
                                   ],
                                 ),
@@ -1035,7 +1179,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
                                   child: Icon(
                                     Icons.search_rounded,
                                     color: Colors.white,
-                                    size: 22,
+                                    size: 18,
                                   ),
                                 ),
                               ),
@@ -1045,7 +1189,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
                       ),
                       const SizedBox(height: 24),
 
-                      // Platform Supported Shortcuts
+                      // Platform Supported Shortcuts Section
                       Row(
                         children: [
                           Expanded(
@@ -1059,9 +1203,10 @@ class _MainAppScreenState extends State<MainAppScreen> {
                             child: Text(
                               'Platform Yang Di Dukung',
                               style: GoogleFonts.inter(
-                                fontSize: 11.5,
+                                fontSize: 12,
                                 fontWeight: FontWeight.w600,
                                 color: const Color(0xFF9CA3AF),
+                                letterSpacing: 0.2,
                               ),
                             ),
                           ),
@@ -1073,15 +1218,15 @@ class _MainAppScreenState extends State<MainAppScreen> {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 14),
 
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           // TikTok Shortcut
                           GestureDetector(
-                            onTap: () =>
-                                _triggerSearch('https://tiktok.com/@user/video/123'),
+                            onTap: () => _triggerSearch(
+                                'https://tiktok.com/@user/video/123'),
                             child: Column(
                               children: [
                                 Container(
@@ -1092,17 +1237,17 @@ class _MainAppScreenState extends State<MainAppScreen> {
                                     shape: BoxShape.circle,
                                     boxShadow: [
                                       BoxShadow(
-                                        color: Colors.black.withOpacity(0.2),
-                                        blurRadius: 10,
-                                        offset: const Offset(0, 4),
+                                        color: Colors.black.withOpacity(0.18),
+                                        blurRadius: 16,
+                                        offset: const Offset(0, 6),
                                       ),
                                     ],
                                   ),
                                   child: Center(
                                     child: Image.asset(
                                       'assets/images/tiktok.png',
-                                      width: 24,
-                                      height: 24,
+                                      width: 42,
+                                      height: 42,
                                       fit: BoxFit.contain,
                                     ),
                                   ),
@@ -1111,15 +1256,15 @@ class _MainAppScreenState extends State<MainAppScreen> {
                                 Text(
                                   'TikTok',
                                   style: GoogleFonts.outfit(
-                                    fontSize: 12,
+                                    fontSize: 11,
                                     fontWeight: FontWeight.w600,
-                                    color: const Color(0xFF374151),
+                                    color: const Color(0xFF4B5563),
                                   ),
                                 ),
                               ],
                             ),
                           ),
-                          const SizedBox(width: 36),
+                          const SizedBox(width: 48),
 
                           // YouTube Shortcut
                           GestureDetector(
@@ -1138,17 +1283,17 @@ class _MainAppScreenState extends State<MainAppScreen> {
                                     ),
                                     boxShadow: [
                                       BoxShadow(
-                                        color: Colors.black.withOpacity(0.06),
-                                        blurRadius: 10,
-                                        offset: const Offset(0, 4),
+                                        color: Colors.black.withOpacity(0.08),
+                                        blurRadius: 16,
+                                        offset: const Offset(0, 6),
                                       ),
                                     ],
                                   ),
                                   child: Center(
                                     child: Image.asset(
                                       'assets/images/yt.png',
-                                      width: 24,
-                                      height: 24,
+                                      width: 42,
+                                      height: 42,
                                       fit: BoxFit.contain,
                                     ),
                                   ),
@@ -1157,9 +1302,9 @@ class _MainAppScreenState extends State<MainAppScreen> {
                                 Text(
                                   'YouTube',
                                   style: GoogleFonts.outfit(
-                                    fontSize: 12,
+                                    fontSize: 11,
                                     fontWeight: FontWeight.w600,
-                                    color: const Color(0xFF374151),
+                                    color: const Color(0xFF4B5563),
                                   ),
                                 ),
                               ],
@@ -1167,24 +1312,24 @@ class _MainAppScreenState extends State<MainAppScreen> {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 28),
+                      const SizedBox(height: 24),
 
-                      // Result Preview Section
+                      // Result Preview Section Header
                       Text(
                         'Pratinjau Hasil',
                         style: GoogleFonts.outfit(
                           fontSize: 16,
-                          fontWeight: FontWeight.bold,
+                          fontWeight: FontWeight.w800,
                           color: const Color(0xFF111827),
                         ),
                       ),
                       const SizedBox(height: 12),
 
-                      // Empty State Placeholder (No icon, clean text as requested!)
+                      // Empty State Placeholder (Clean text matching index.html)
                       if (!_hasSearched)
                         CustomPaint(
                           painter: DashedRectPainter(
-                            color: const Color(0xFFD1D5DB),
+                            color: const Color(0xFFE5E7EB),
                             strokeWidth: 1.5,
                             gap: 6.0,
                           ),
@@ -1192,7 +1337,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
                             width: double.infinity,
                             padding: const EdgeInsets.symmetric(
                               horizontal: 20,
-                              vertical: 36,
+                              vertical: 32,
                             ),
                             child: Center(
                               child: Text(
@@ -1202,50 +1347,50 @@ class _MainAppScreenState extends State<MainAppScreen> {
                                   fontSize: 13,
                                   fontWeight: FontWeight.w500,
                                   color: const Color(0xFF9CA3AF),
+                                  height: 1.4,
                                 ),
                               ),
                             ),
                           ),
                         )
                       else
-                        // Dynamic Preview Card
+                        // Dynamic Preview Card (Matching index.html)
                         Container(
                           width: double.infinity,
                           padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
                             color: Colors.white,
-                            borderRadius: BorderRadius.circular(24),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: const Color(0xFFF3F4F6)),
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.black.withOpacity(0.08),
-                                blurRadius: 20,
-                                offset: const Offset(0, 6),
+                                color: Colors.black.withOpacity(0.05),
+                                blurRadius: 24,
+                                offset: const Offset(0, 8),
                               ),
                             ],
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // Card Header (Platform Badge + Creator)
+                              // Card Header (Platform Badge + Creator Handle)
                               Row(
                                 mainAxisAlignment:
                                     MainAxisAlignment.spaceBetween,
                                 children: [
-                                  // Platform Badge
                                   Container(
                                     padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
+                                      horizontal: 12,
                                       vertical: 5,
                                     ),
                                     decoration: BoxDecoration(
                                       color: _platformType.startsWith('tiktok')
                                           ? Colors.black
                                           : Colors.white,
-                                      borderRadius: BorderRadius.circular(16),
+                                      borderRadius: BorderRadius.circular(12),
                                       border: _platformType.startsWith('youtube')
                                           ? Border.all(
                                               color: const Color(0xFFE5E7EB),
-                                              width: 1.2,
                                             )
                                           : null,
                                     ),
@@ -1260,12 +1405,12 @@ class _MainAppScreenState extends State<MainAppScreen> {
                                           height: 16,
                                           fit: BoxFit.contain,
                                         ),
-                                        const SizedBox(width: 4),
+                                        const SizedBox(width: 6),
                                         Text(
                                           _platformName,
                                           style: GoogleFonts.outfit(
-                                            fontSize: 11.5,
-                                            fontWeight: FontWeight.bold,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w700,
                                             color: _platformType
                                                     .startsWith('tiktok')
                                                 ? Colors.white
@@ -1276,36 +1421,33 @@ class _MainAppScreenState extends State<MainAppScreen> {
                                       ],
                                     ),
                                   ),
-
-                                  // Creator Handle
                                   Text(
                                     _creatorHandle,
-                                    style: GoogleFonts.inter(
-                                      fontSize: 12.5,
-                                      fontWeight: FontWeight.w600,
-                                      color: const Color(0xFF6B7280),
+                                    style: GoogleFonts.outfit(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                      color: const Color(0xFF4B5563),
                                     ),
                                   ),
                                 ],
                               ),
-                              const SizedBox(height: 12),
+                              const SizedBox(height: 14),
 
-                              // Dynamic Media View
+                              // Dynamic Media Container
                               if (_platformType == 'tiktok_photo') ...[
-                                // TikTok Photo Slide Carousel
                                 ClipRRect(
-                                  borderRadius: BorderRadius.circular(16),
+                                  borderRadius: BorderRadius.circular(14),
                                   child: Container(
-                                    height: 220,
+                                    height: 240,
                                     width: double.infinity,
-                                    color: const Color(0xFFF3F4F6),
+                                    color: Colors.black,
                                     child: Stack(
                                       children: [
                                         PageView.builder(
                                           controller: _pageController,
-                                          onPageChanged: (index) {
+                                          onPageChanged: (idx) {
                                             setState(() {
-                                              _currentSlideIndex = index;
+                                              _currentSlideIndex = idx;
                                             });
                                           },
                                           itemCount: _slideImages.length,
@@ -1313,66 +1455,34 @@ class _MainAppScreenState extends State<MainAppScreen> {
                                             return Image.network(
                                               _slideImages[index],
                                               fit: BoxFit.cover,
-                                              width: double.infinity,
                                             );
                                           },
                                         ),
-                                        // Slide Counter Badge
                                         Positioned(
-                                          top: 10,
-                                          left: 10,
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 10,
-                                              vertical: 4,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color:
-                                                  Colors.black.withOpacity(0.6),
-                                              borderRadius:
-                                                  BorderRadius.circular(12),
-                                            ),
-                                            child: Text(
-                                              'Slide ${_currentSlideIndex + 1}',
-                                              style: GoogleFonts.outfit(
-                                                fontSize: 11,
-                                                fontWeight: FontWeight.bold,
-                                                color: Colors.white,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                        // Dots Indicator
-                                        Positioned(
-                                          bottom: 10,
+                                          top: 12,
                                           left: 0,
                                           right: 0,
-                                          child: Row(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.center,
-                                            children: List.generate(
-                                              _slideImages.length,
-                                              (idx) {
-                                                final isActive =
-                                                    idx == _currentSlideIndex;
-                                                return AnimatedContainer(
-                                                  duration: const Duration(
-                                                      milliseconds: 250),
-                                                  margin:
-                                                      const EdgeInsets.symmetric(
-                                                          horizontal: 3),
-                                                  width: isActive ? 18 : 6,
-                                                  height: 6,
-                                                  decoration: BoxDecoration(
-                                                    color: isActive
-                                                        ? const Color(0xFFEF4444)
-                                                        : Colors.white
-                                                            .withOpacity(0.7),
-                                                    borderRadius:
-                                                        BorderRadius.circular(3),
-                                                  ),
-                                                );
-                                              },
+                                          child: Center(
+                                            child: Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                horizontal: 14,
+                                                vertical: 5,
+                                              ),
+                                              decoration: BoxDecoration(
+                                                color: Colors.black
+                                                    .withOpacity(0.65),
+                                                borderRadius:
+                                                    BorderRadius.circular(20),
+                                              ),
+                                              child: Text(
+                                                'Slide ${_currentSlideIndex + 1}',
+                                                style: GoogleFonts.outfit(
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: Colors.white,
+                                                ),
+                                              ),
                                             ),
                                           ),
                                         ),
@@ -1380,17 +1490,42 @@ class _MainAppScreenState extends State<MainAppScreen> {
                                     ),
                                   ),
                                 ),
+                                const SizedBox(height: 10),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: List.generate(
+                                    _slideImages.length,
+                                    (idx) {
+                                      final isActive =
+                                          idx == _currentSlideIndex;
+                                      return AnimatedContainer(
+                                        duration:
+                                            const Duration(milliseconds: 300),
+                                        margin: const EdgeInsets.symmetric(
+                                            horizontal: 3),
+                                        width: isActive ? 16 : 6,
+                                        height: 6,
+                                        decoration: BoxDecoration(
+                                          color: isActive
+                                              ? const Color(0xFFEF4444)
+                                              : const Color(0xFFD1D5DB),
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
                               ] else ...[
-                                // Video Thumbnail (Landscape / Portrait)
                                 ClipRRect(
-                                  borderRadius: BorderRadius.circular(16),
+                                  borderRadius: BorderRadius.circular(14),
                                   child: AspectRatio(
                                     aspectRatio:
                                         (_platformType == 'youtube_live' ||
                                                 _platformType ==
                                                     'youtube_standard')
                                             ? 16 / 9
-                                            : 9 / 12,
+                                            : 9 / 14,
                                     child: Image.network(
                                       _platformType == 'youtube_live'
                                           ? 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=800&auto=format&fit=crop&q=80'
@@ -1402,21 +1537,21 @@ class _MainAppScreenState extends State<MainAppScreen> {
                                   ),
                                 ),
                               ],
-                              const SizedBox(height: 12),
+                              const SizedBox(height: 14),
 
-                              // Video Title
+                              // Video Title Block
                               Text(
                                 _videoTitle,
                                 style: GoogleFonts.outfit(
-                                  fontSize: 14.5,
+                                  fontSize: 14,
                                   fontWeight: FontWeight.bold,
                                   color: const Color(0xFF111827),
-                                  height: 1.3,
+                                  height: 1.4,
                                 ),
                               ),
-                              const SizedBox(height: 16),
+                              const SizedBox(height: 12),
 
-                              // Dropdown Trigger Accordion Button
+                              // Accordion Dropdown Button
                               GestureDetector(
                                 onTap: () {
                                   setState(() {
@@ -1426,11 +1561,11 @@ class _MainAppScreenState extends State<MainAppScreen> {
                                 child: Container(
                                   padding: const EdgeInsets.symmetric(
                                     horizontal: 14,
-                                    vertical: 12,
+                                    vertical: 10,
                                   ),
                                   decoration: BoxDecoration(
                                     color: const Color(0xFFF9FAFB),
-                                    borderRadius: BorderRadius.circular(14),
+                                    borderRadius: BorderRadius.circular(12),
                                     border: Border.all(
                                       color: const Color(0xFFE5E7EB),
                                     ),
@@ -1442,54 +1577,43 @@ class _MainAppScreenState extends State<MainAppScreen> {
                                       Text(
                                         _dropdownLabel,
                                         style: GoogleFonts.outfit(
-                                          fontSize: 13.5,
-                                          fontWeight: FontWeight.w700,
-                                          color: const Color(0xFF374151),
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold,
+                                          color: const Color(0xFF111827),
                                         ),
                                       ),
-                                      Icon(
-                                        _isDropdownExpanded
-                                            ? Icons.keyboard_arrow_up_rounded
-                                            : Icons.keyboard_arrow_down_rounded,
-                                        color: const Color(0xFF6B7280),
-                                        size: 20,
+                                      AnimatedRotation(
+                                        turns: _isDropdownExpanded ? 0.5 : 0.0,
+                                        duration:
+                                            const Duration(milliseconds: 300),
+                                        child: const Icon(
+                                          Icons.keyboard_arrow_down_rounded,
+                                          color: Color(0xFF6B7280),
+                                          size: 18,
+                                        ),
                                       ),
                                     ],
                                   ),
                                 ),
                               ),
 
-                              // Options List
+                              // Accordion Options List
                               if (_isDropdownExpanded) ...[
                                 const SizedBox(height: 10),
-                                ListView.separated(
-                                  shrinkWrap: true,
-                                  physics: const NeverScrollableScrollPhysics(),
-                                  itemCount: _optionsList.length,
-                                  separatorBuilder: (_, __) =>
-                                      const SizedBox(height: 8),
-                                  itemBuilder: (context, idx) {
-                                    final opt = _optionsList[idx];
+                                Column(
+                                  children: _optionsList.map((item) {
                                     return Container(
+                                      margin: const EdgeInsets.only(bottom: 8),
                                       padding: const EdgeInsets.symmetric(
                                         horizontal: 12,
                                         vertical: 10,
                                       ),
                                       decoration: BoxDecoration(
-                                        color: Colors.white,
-                                        borderRadius:
-                                            BorderRadius.circular(14),
+                                        color: const Color(0xFFF9FAFB),
+                                        borderRadius: BorderRadius.circular(12),
                                         border: Border.all(
                                           color: const Color(0xFFF3F4F6),
                                         ),
-                                        boxShadow: [
-                                          BoxShadow(
-                                            color:
-                                                Colors.black.withOpacity(0.03),
-                                            blurRadius: 6,
-                                            offset: const Offset(0, 2),
-                                          ),
-                                        ],
                                       ),
                                       child: Row(
                                         mainAxisAlignment:
@@ -1500,34 +1624,32 @@ class _MainAppScreenState extends State<MainAppScreen> {
                                                 CrossAxisAlignment.start,
                                             children: [
                                               Text(
-                                                opt['res']!,
+                                                item['res'] ?? '',
                                                 style: GoogleFonts.outfit(
-                                                  fontSize: 13,
-                                                  fontWeight: FontWeight.bold,
-                                                  color:
-                                                      const Color(0xFF111827),
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w800,
+                                                  color: const Color(0xFF111827),
                                                 ),
                                               ),
-                                              const SizedBox(height: 2),
                                               Text(
-                                                opt['sub']!,
-                                                style: GoogleFonts.inter(
-                                                  fontSize: 11,
-                                                  fontWeight: FontWeight.w500,
-                                                  color:
-                                                      const Color(0xFF6B7280),
+                                                item['sub'] ?? '',
+                                                style: GoogleFonts.outfit(
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.w600,
+                                                  color: const Color(0xFF6B7280),
                                                 ),
                                               ),
                                             ],
                                           ),
                                           GestureDetector(
                                             onTap: () => _handleDownloadAction(
-                                                opt['format']!),
+                                              item['format'] ?? '',
+                                            ),
                                             child: Container(
                                               padding:
                                                   const EdgeInsets.symmetric(
                                                 horizontal: 14,
-                                                vertical: 8,
+                                                vertical: 6,
                                               ),
                                               decoration: BoxDecoration(
                                                 gradient: const LinearGradient(
@@ -1538,32 +1660,27 @@ class _MainAppScreenState extends State<MainAppScreen> {
                                                 ),
                                                 borderRadius:
                                                     BorderRadius.circular(10),
-                                                boxShadow: [
+                                                boxShadow: const [
                                                   BoxShadow(
-                                                    color: const Color(
-                                                            0xFFEF4444)
-                                                        .withOpacity(0.3),
+                                                    color: Color(0x40EF4444),
                                                     blurRadius: 8,
-                                                    offset:
-                                                        const Offset(0, 3),
+                                                    offset: Offset(0, 3),
                                                   ),
                                                 ],
                                               ),
                                               child: Row(
                                                 children: [
                                                   const Icon(
-                                                    Icons.download_rounded,
+                                                    Icons
+                                                        .arrow_downward_rounded,
                                                     color: Colors.white,
                                                     size: 14,
                                                   ),
                                                   const SizedBox(width: 4),
                                                   Text(
-                                                    opt['format'] ==
-                                                            'Semua Slide ZIP'
-                                                        ? 'Unduh ZIP'
-                                                        : 'Unduh',
+                                                    'Unduh',
                                                     style: GoogleFonts.outfit(
-                                                      fontSize: 12,
+                                                      fontSize: 11,
                                                       fontWeight:
                                                           FontWeight.bold,
                                                       color: Colors.white,
@@ -1576,7 +1693,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
                                         ],
                                       ),
                                     );
-                                  },
+                                  }).toList(),
                                 ),
                               ],
                             ],
@@ -1586,92 +1703,34 @@ class _MainAppScreenState extends State<MainAppScreen> {
                   ),
                 ),
 
-                // TAB 1: UNDUHAN (RIWAYAT UNDUHAN)
+                // TAB 1: UNDUHAN (DOWNLOAD HISTORY)
                 Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Container(
-                        width: 72,
-                        height: 72,
-                        decoration: const BoxDecoration(
-                          color: Color(0xFFFEE2E2),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Center(
-                          child: Icon(
-                            Icons.file_download_rounded,
-                            color: Color(0xFFEF4444),
-                            size: 36,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Riwayat Unduhan',
-                        style: GoogleFonts.outfit(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: const Color(0xFF111827),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Belum ada file yang diunduh',
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          color: const Color(0xFF6B7280),
-                        ),
-                      ),
-                    ],
+                  child: Text(
+                    'Riwayat Unduhan',
+                    style: GoogleFonts.outfit(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: const Color(0xFF6B7280),
+                    ),
                   ),
                 ),
 
-                // TAB 2: PENGATURAN
+                // TAB 2: PENGATURAN (SETTINGS)
                 Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Container(
-                        width: 72,
-                        height: 72,
-                        decoration: const BoxDecoration(
-                          color: Color(0xFFF3F4F6),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Center(
-                          child: Icon(
-                            Icons.settings_rounded,
-                            color: Color(0xFF4B5563),
-                            size: 36,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Pengaturan',
-                        style: GoogleFonts.outfit(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: const Color(0xFF111827),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Versi Aplikasi SnapCat 1.0.0',
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          color: const Color(0xFF6B7280),
-                        ),
-                      ),
-                    ],
+                  child: Text(
+                    'Pengaturan Aplikasi',
+                    style: GoogleFonts.outfit(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: const Color(0xFF6B7280),
+                    ),
                   ),
                 ),
               ],
             ),
           ),
 
-          // Floating Glassmorphism Bottom Navigation Dock (Fixed at bottom)
+          // FLOATING GLASSMORPHISM BOTTOM NAVIGATION DOCK (FIXED FLOATING)
           Positioned(
             bottom: 18,
             left: 18,
@@ -1680,12 +1739,12 @@ class _MainAppScreenState extends State<MainAppScreen> {
               child: Container(
                 constraints: const BoxConstraints(maxWidth: 310),
                 height: 62,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
                 decoration: BoxDecoration(
                   color: Colors.white.withOpacity(0.95),
                   borderRadius: BorderRadius.circular(31),
                   border: Border.all(
                     color: Colors.white.withOpacity(0.8),
+                    width: 1.0,
                   ),
                   boxShadow: [
                     BoxShadow(
@@ -1698,9 +1757,9 @@ class _MainAppScreenState extends State<MainAppScreen> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: [
-                    _buildNavItem(0, 'Home', svgAsset: 'assets/icons/home.svg'),
-                    _buildNavItem(1, 'Unduhan', iconData: Icons.file_download_rounded),
-                    _buildNavItem(2, 'Pengaturan', svgAsset: 'assets/icons/seting.svg'),
+                    _buildDockNavItem(0, Icons.home_rounded, 'Home'),
+                    _buildDockNavItem(1, Icons.download_rounded, 'Unduhan'),
+                    _buildDockNavItem(2, Icons.settings_rounded, 'Pengaturan'),
                   ],
                 ),
               ),
@@ -1711,10 +1770,8 @@ class _MainAppScreenState extends State<MainAppScreen> {
     );
   }
 
-  Widget _buildNavItem(int index, String label, {String? svgAsset, IconData? iconData}) {
+  Widget _buildDockNavItem(int index, IconData icon, String label) {
     final isActive = _activeNavIndex == index;
-    final color =
-        isActive ? const Color(0xFFEF4444) : const Color(0xFF9CA3AF);
 
     return GestureDetector(
       onTap: () {
@@ -1722,29 +1779,27 @@ class _MainAppScreenState extends State<MainAppScreen> {
           _activeNavIndex = index;
         });
       },
-      child: Container(
-        color: Colors.transparent,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
           children: [
-            if (svgAsset != null)
-              SvgPicture.asset(
-                svgAsset,
-                width: 22,
-                height: 22,
-                colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
-              )
-            else if (iconData != null)
-              Icon(iconData, color: color, size: 22),
+            Icon(
+              icon,
+              size: 22,
+              color:
+                  isActive ? const Color(0xFFEF4444) : const Color(0xFF9CA3AF),
+            ),
             const SizedBox(height: 2),
             Text(
               label,
               style: GoogleFonts.outfit(
-                fontSize: 10.5,
-                fontWeight: isActive ? FontWeight.bold : FontWeight.w600,
-                color: color,
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                color: isActive
+                    ? const Color(0xFFEF4444)
+                    : const Color(0xFF9CA3AF),
               ),
             ),
           ],
@@ -1754,7 +1809,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
   }
 }
 
-/* Custom Painter for Empty State Dashed Border Placeholder */
+/// Dashed Border Painter for Empty State Box
 class DashedRectPainter extends CustomPainter {
   final Color color;
   final double strokeWidth;
@@ -1768,20 +1823,19 @@ class DashedRectPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final Paint paint = Paint()
+    final paint = Paint()
       ..color = color
       ..strokeWidth = strokeWidth
       ..style = PaintingStyle.stroke;
 
-    final RRect rrect = RRect.fromRectAndRadius(
-      Rect.fromLTWH(0, 0, size.width, size.height),
-      const Radius.circular(20),
-    );
+    final path = Path()
+      ..addRRect(RRect.fromRectAndRadius(
+        Rect.fromLTWH(0, 0, size.width, size.height),
+        const Radius.circular(20),
+      ));
 
-    final Path path = Path()..addRRect(rrect);
-    final Path dashPath = Path();
-
-    for (final PathMetric metric in path.computeMetrics()) {
+    final dashPath = Path();
+    for (final metric in path.computeMetrics()) {
       double distance = 0.0;
       while (distance < metric.length) {
         dashPath.addPath(
@@ -1796,9 +1850,5 @@ class DashedRectPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant DashedRectPainter oldDelegate) {
-    return oldDelegate.color != color ||
-        oldDelegate.strokeWidth != strokeWidth ||
-        oldDelegate.gap != gap;
-  }
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
